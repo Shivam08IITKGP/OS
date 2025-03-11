@@ -30,7 +30,6 @@ void unlock(int semid);
 
 int shmid, semid, *shared_memory;
 
-// Print time function (converts simulation time to clock time)
 void display_time(int sim_time)
 {
     int hour = 11 + sim_time / 60;
@@ -71,7 +70,7 @@ void unlock(int semid)
 
 int main()
 {
-    key_t key = ftok("cook.c", 65); // Same key as cook.c
+    key_t key = ftok("cook.c", 65);
     pid_t waiter_pids[NUM_WAITERS];
 
     // Get shared memory ID
@@ -98,7 +97,7 @@ int main()
         exit(1);
     }
 
-    printf("Waiter processes starting...\n");
+    printf("waiter processes starting...\n");
 
     // Create waiter processes
     for (int i = 0; i < NUM_WAITERS; i++)
@@ -171,6 +170,17 @@ void wmain(int waiter_id)
     while (1)
     {
         // Wait for a signal (from customer placing an order or cook having food ready)
+
+        lock(semid);
+        if (shared_memory[70 + waiter_id] == 1)
+        {
+            if (shared_memory[shared_memory[waiter_queue_front]] == 0)
+            {
+                unlock(semid);
+                break;
+            }
+        }
+        unlock(semid);
         sbuf.sem_num = WAITER_SEM_START + waiter_id;
         sbuf.sem_op = -1;
         sbuf.sem_flg = 0;
@@ -181,21 +191,13 @@ void wmain(int waiter_id)
         }
 
         lock(semid);
+
         current_time = shared_memory[TIME_INDEX];
         waiter_fr_index = 100 + (waiter_id * 200);
         waiter_po_index = waiter_fr_index + 1;
         int food_ready = shared_memory[waiter_fr_index];
         int pending_orders = shared_memory[waiter_po_index];
         int restaurant_closed = (shared_memory[ORDERS_PENDING_INDEX] == -1);
-
-        // Check if restaurant is closed and no more work to do
-        if (restaurant_closed && food_ready == -1 && pending_orders == 0)
-        {
-            unlock(semid);
-            display_time(current_time);
-            printf("Waiter %d: Restaurant is closed and no more orders, ending shift\n", waiter_id);
-            break;
-        }
 
         // Check if food is ready
         if (food_ready != -1)
@@ -220,6 +222,7 @@ void wmain(int waiter_id)
                 exit(1);
             }
         }
+
         else if (pending_orders > 0)
         {
             // Get customer order from queue
@@ -230,9 +233,6 @@ void wmain(int waiter_id)
 
             // Update queue front pointer
             shared_memory[waiter_queue_front] = front_ptr + 2;
-            // Wraparound if needed
-            if (shared_memory[waiter_queue_front] >= waiter_queue_front + 196)
-                shared_memory[waiter_queue_front] = waiter_queue_front + 4;
 
             // Decrement pending orders
             shared_memory[waiter_po_index]--;
@@ -242,7 +242,6 @@ void wmain(int waiter_id)
                    waiter_id, customer_id, customer_count);
 
             // Add order to cook queue
-
             unlock(semid);
             usleep(SIM_MINUTE);
             lock(semid);
@@ -252,6 +251,7 @@ void wmain(int waiter_id)
                 shared_memory[TIME_INDEX] = 1 + current_time;
             }
             current_time = shared_memory[TIME_INDEX];
+            shared_memory[ORDERS_PENDING_INDEX]++;
             int cook_queue_back_index = shared_memory[COOK_QUEUE_START + 1];
             shared_memory[cook_queue_back_index] = waiter_id;
             shared_memory[cook_queue_back_index + 1] = customer_id;
@@ -259,9 +259,6 @@ void wmain(int waiter_id)
 
             // Update back pointer
             shared_memory[COOK_QUEUE_START + 1] = cook_queue_back_index + 3;
-            if (shared_memory[COOK_QUEUE_START + 1] >= COOK_QUEUE_START + COOK_QUEUE_SIZE)
-                shared_memory[COOK_QUEUE_START + 1] = COOK_QUEUE_START + 3;
-
             unlock(semid);
 
             display_time(current_time);
@@ -283,9 +280,6 @@ void wmain(int waiter_id)
             unlock(semid);
         }
     }
-
-    display_time(shared_memory[TIME_INDEX]);
-    printf("Waiter %d ended shift\n", waiter_id);
 
     // Detach shared memory
     if (shmdt(shared_memory) == -1)

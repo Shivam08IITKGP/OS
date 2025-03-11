@@ -165,7 +165,12 @@ int main()
         shared_memory[waiter_base + 1] = 0;               // PO index (pending orders)
         shared_memory[waiter_base + 2] = waiter_base + 4; // Front pointer
         shared_memory[waiter_base + 3] = waiter_base + 4; // Back pointer
+        shared_memory[69 + i + 1] = 0;
     }
+    shared_memory[69] = 2;
+    // Number of cooks working
+    shared_memory[70] = 6;
+    // Number of waiters working
 
     // Create cook processes
     cook_c_pid = fork();
@@ -258,21 +263,22 @@ void cmain(int cook_id)
             perror("semop - wait cook");
             exit(1);
         }
+        // No Change here
 
         // Lock mutex before accessing the cook queue
         lock(semid);
-
         // Check if it's after 3:00 PM and the cook queue is empty
         current_time = shared_memory[TIME_INDEX];
         cook_queue_front_index = shared_memory[COOK_QUEUE_START];
         cook_queue_back_index = shared_memory[COOK_QUEUE_START + 1];
 
-        if ((current_time >= 240 || shared_memory[ORDERS_PENDING_INDEX] == -1) &&
+        if ((current_time >= 240 && shared_memory[ORDERS_PENDING_INDEX] == 0) &&
             cook_queue_front_index == cook_queue_back_index)
         {
+            shared_memory[69]--;
             unlock(semid);
             display_time(current_time);
-            printf("Cook %d: Restaurant is closed, ending shift\n", cook_id);
+            printf("Cook %d: ending shift\n", cook_id);
             break;
         }
 
@@ -285,9 +291,8 @@ void cmain(int cook_id)
 
             // Update the front pointer
             shared_memory[COOK_QUEUE_START] = cook_queue_front_index + 3;
-            if (shared_memory[COOK_QUEUE_START] >= COOK_QUEUE_START + COOK_QUEUE_SIZE)
-                shared_memory[COOK_QUEUE_START] = COOK_QUEUE_START + 3;
 
+            shared_memory[ORDERS_PENDING_INDEX]--;
             unlock(semid);
 
             display_time(current_time);
@@ -323,6 +328,31 @@ void cmain(int cook_id)
                 perror("semop - signal waiter");
                 exit(1);
             }
+
+            lock(semid);
+            if (current_time >= 240 && shared_memory[ORDERS_PENDING_INDEX] == 0)
+            {
+                shared_memory[69]--;
+                if (shared_memory[69] == 0)
+                {
+                    for (int i = 0; i < NUM_WAITERS; i++)
+                    {
+                        shared_memory[70 + i] = 1;
+                        // signal the waiters
+                        sbuf.sem_num = WAITER_SEM_START + i;
+                        sbuf.sem_op = 1; // Signal
+                        sbuf.sem_flg = 0;
+                        if (semop(semid, &sbuf, 1) == -1)
+                        {
+                            perror("semop - signal waiter");
+                            exit(1);
+                        }
+                    }
+                }
+                unlock(semid);
+                break;
+            }
+            unlock(semid);
         }
         else
         {
@@ -332,7 +362,7 @@ void cmain(int cook_id)
     }
 
     display_time(shared_memory[TIME_INDEX]);
-    printf("Cook %d ended shift\n", cook_id);
+    printf("Cook %d: ending shift\n", cook_id);
 
     // Detach shared memory
     if (shmdt(shared_memory) == -1)

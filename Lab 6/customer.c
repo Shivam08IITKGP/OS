@@ -130,31 +130,13 @@ int main()
 
     fclose(customer_file);
 
-    // Simulate time passing
-    int current_time = 0;
-    while (current_time <= 240) // 3:30 PM (allow some extra time for cleanup)
+    // Wait for customer processes to finish
+    for (int i = 0; i < customer_count_loaded; i++)
     {
-        lock(semid);
-        shared_memory[TIME_INDEX] = current_time;
-        unlock(semid);
-
-        if (current_time == 240)
-        {
-            display_time(current_time);
-            printf("Restaurant closing time: 3:00 PM\n");
-        }
-
-        usleep(SIM_MINUTE);
-        current_time++;
+        wait(NULL);
     }
-
-    // Wait for all customer processes to finish
-    while (wait(&status) > 0)
-        ;
-
     printf("Restaurant simulation ended.\n");
 
-    // Clean up resources - remove shared memory and semaphores
     // Detach shared memory
     if (shmdt(shared_memory) == -1)
     {
@@ -163,7 +145,7 @@ int main()
     }
 
     // Remove shared memory and semaphores after a delay to ensure all processes are done
-    sleep(1);
+    sleep(2);
     shmctl(shmid, IPC_RMID, NULL);
     semctl(semid, 0, IPC_RMID);
 
@@ -172,7 +154,7 @@ int main()
 
 void cmain(int customer_id, int arrival_time, int customer_count)
 {
-    key_t key = ftok("cook.c", 65); // Same key
+    key_t key = ftok("cook.c", 65);
     int shmid, semid;
     int *shared_memory;
     struct sembuf sbuf;
@@ -213,7 +195,6 @@ void cmain(int customer_id, int arrival_time, int customer_count)
         {
             break;
         }
-
         usleep(SIM_MINUTE / 10); // Check more frequently than actual time
     }
 
@@ -234,7 +215,7 @@ void cmain(int customer_id, int arrival_time, int customer_count)
             perror("shmdt");
             exit(1);
         }
-        return;
+        exit(0);
     }
 
     // Check if there are enough empty tables
@@ -271,11 +252,8 @@ void cmain(int customer_id, int arrival_time, int customer_count)
 
     // Update waiter's back pointer
     shared_memory[waiter_back_ptr_idx] = waiter_back_ptr + 2;
-    // Check for wraparound (cyclic queue)
-    if (shared_memory[waiter_back_ptr_idx] >= waiter_base + 196)
-    {
-        shared_memory[waiter_back_ptr_idx] = waiter_base + 4;
-    }
+
+    shared_memory[waiter_back_ptr_idx] = waiter_base + 4;
 
     // Increment pending orders
     shared_memory[waiter_po_index]++;
@@ -301,7 +279,7 @@ void cmain(int customer_id, int arrival_time, int customer_count)
     sbuf.sem_flg = 0;
     if (semop(semid, &sbuf, 1) == -1)
     {
-        perror("semop - wait for food");
+        printf("semop - wait for food %d\n", customer_id);
         exit(1);
     }
 
@@ -331,4 +309,5 @@ void cmain(int customer_id, int arrival_time, int customer_count)
         perror("shmdt");
         exit(1);
     }
+    exit(0);
 }
